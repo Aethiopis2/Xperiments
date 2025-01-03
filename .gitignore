@@ -2,3 +2,12 @@ GOL/.vs
 GOL/x64
 GOL/GOL/x64
 GOL/GOL/*.txt
+
+Raiders/.vs
+Raiders/x64
+Raiders/Raiders/x64
+Raiders/Raiders/*.txt
+Raiders/Debug
+Raiders/Raiders/Debug
+Raiders/Raiders/*.vcxproj
+Raiders/Raiders/*.vcxproj.*
