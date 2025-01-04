@@ -1,3 +1,4 @@
+#pragma warning(disable:4996)
 // T3DLIB3.CPP - Game Engine Part III, sound & music
  
 // INCLUDES ///////////////////////////////////////////////

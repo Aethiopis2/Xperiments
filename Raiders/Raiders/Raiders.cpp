@@ -32,9 +32,9 @@
 #include <ddraw.h>    // directX includes
 #include <dsound.h>
 #include <dmksctrl.h>
-//#include <dmusici.h>
+#include <dmusici.h>
 #include <dmusicc.h>
-//#include <dmusicf.h>
+#include <dmusicf.h>
 #include <dinput.h>
 
 #include "t3dlib1.h"
@@ -130,7 +130,7 @@ typedef struct EXPL_TYP
 int Game_Init(void* parms = NULL);
 int Game_Main(void* parms = NULL);
 int Game_Shutdown(void* parms = NULL);
-int Init_Tie(int index);
+void Init_Tie(int index);
 
 
 
@@ -145,7 +145,7 @@ char buffer[256];
 POINT3D tie_vlist[NUM_TIE_VERTS];		// vertex list for tie fighter model
 LINE3D tie_shape[NUM_TIE_EDGES];		// edge list for tie fighter model
 TIE ties[NUM_TIES];						// tie fighters
-POINT3D start[NUM_STARS];				// the star field
+POINT3D stars[NUM_STARS];				// the star field
 
 UINT rgba_green,
 rgba_white,
@@ -180,7 +180,7 @@ explosion_id,			// blast sounds
 flyby_id;				// tie fighter flying by 
 
 int game_state = GAME_RUNNING;
-
+int window_closed = 0;
 
 
 #define EEXIT(h, m)		{ snprintf(buffer, 256, "%s failed with error code %d", m, GetLastError()); \
@@ -312,14 +312,133 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 
 //============================================================================|
-int Init_Tie(int index)
+/**
+ * Start's a tie fighter at far end of the universe so as to send it towards 
+ *	the screen simulating 3D
+ */
+void Init_Tie(int index)
 {
-	return 0;
+	// position each tie in the viewing volume
+	ties[index].x = -WINDOW_WIDTH + rand() % (2 * WINDOW_WIDTH);
+	ties[index].y = -WINDOW_HEIGHT + rand() % (2 * WINDOW_HEIGHT);
+	ties[index].z = 4 * FAR_Z;
+
+	// initalize velocity of tie fighter
+	ties[index].vx = -4 + rand() % 8;
+	ties[index].vy = -4 + rand() % 8;
+	ties[index].vz = -4 - rand() % 64;
+
+	// turn tie fighter on
+	ties[index].state = 1;
 } // end Init_Tie
 
 
 
 //============================================================================|
+/**
+ * Moves each alive tie fighter towards the screen i.e. the near plane from
+ *	the far plane of the universe. If tie crosses past the near plane it's reset
+ *	back to the far side
+ */
+void Process_Ties()
+{
+	int index;
+
+	for (index = 0; index < NUM_TIES; index++)
+	{
+		if (ties[index].state == 0)
+			continue;		// is dead
+
+		ties[index].x += ties[index].vx;
+		ties[index].y += ties[index].vy;
+		ties[index].z += ties[index].vz;
+
+		if (ties[index].z <= NEAR_Z)
+		{
+			Init_Tie(index);
+			misses++;
+		} // end if clip
+	} // end for
+} // end Process_Ties
+
+
+
+//============================================================================|
+void Draw_Ties()
+{
+	int index;
+	int bmin_x, bmin_y, bmax_x, bmax_y;		// bounding box collosion detection
+
+	// draw each tie fighter
+	for (index = 0; index < NUM_TIES; index++)
+	{
+		if (ties[index].state == 0)
+			continue;		// dead one.
+
+		bmin_x = bmin_y = 100'000;
+		bmax_x = bmax_y = -100'000;
+
+		// based on z distance shade the tie fighter
+		UINT rgba_tie = _RGB32BIT(0, 0, (255 - 255 * (ties[index].z / (4 * FAR_Z))), 0);
+		
+		// as this is a wireframe stuff a tie fighter is 
+		//	made up of bunch of edges and stuff
+		for (int edge = 0; edge < NUM_TIE_EDGES; edge++)
+		{
+			POINT3D p1_per, p2_per;
+
+			p1_per.x = VIEW_DISTANCE * (ties[index].x + tie_vlist[tie_shape[edge].v1].x) /
+				(tie_vlist[tie_shape[edge].v1].z + ties[index].z);
+			p1_per.y = VIEW_DISTANCE * (ties[index].y + tie_vlist[tie_shape[edge].v1].y) /
+				(tie_vlist[tie_shape[edge].v1].z + ties[index].z);
+			p2_per.x = VIEW_DISTANCE * (ties[index].x + tie_vlist[tie_shape[edge].v2].x) /
+				(tie_vlist[tie_shape[edge].v1].z + ties[index].z);
+			p2_per.y = VIEW_DISTANCE * (ties[index].y + tie_vlist[tie_shape[edge].v2].y) /
+				(tie_vlist[tie_shape[edge].v1].z + ties[index].z);
+
+			int p1_screen_x = WINDOW_WIDTH / 2 + p1_per.x;
+			int p1_screen_y = WINDOW_HEIGHT / 2 - p1_per.y;
+			int p2_screen_x = WINDOW_WIDTH / 2 + p2_per.x;
+			int p2_screen_y = WINDOW_HEIGHT / 2 - p2_per.y;
+
+			Draw_Clip_Line32(p1_screen_x, p1_screen_y, p2_screen_x, p2_screen_y, rgba_tie,
+				back_buffer, back_lpitch);
+			
+			int min_x = min(p1_screen_x, p2_screen_x);
+			int max_x = max(p1_screen_x, p2_screen_x);
+			int min_y = min(p1_screen_y, p2_screen_y);
+			int max_y = max(p1_screen_y, p2_screen_y);
+
+			bmin_x = min(bmin_x, min_x);
+			bmin_y = min(bmin_y, min_y);
+			bmax_x = max(bmax_x, max_x);
+			bmax_y = max(bmax_y, max_y);
+		} // end for edge
+
+		// test hit with cannon
+		if (cannon_state == 1)
+		{
+			if (target_x_screen > bmin_x && target_x_screen < bmax_x &&
+				target_y_screen > bmin_x && target_y_screen < bmax_y)
+			{
+				Start_Explosion(index);
+				DSound_Play(explosion_id);
+
+				score += ties[index].z;
+				hits++;
+				Init_Tie(index);
+			} // end if inbound
+		} // end if cannon_state
+	} // end for
+} // end Draw_Tie
+
+
+
+//============================================================================|
+/**
+ * Initializes the direct draw, sound, and input as well as game elements
+ *	such as starfields and crosshair, and tie fighters.
+ */
 int Game_Init(void* parms)
 {
 	int index;
@@ -331,24 +450,170 @@ int Game_Init(void* parms)
 	DInput_Init_Keyboard();
 	DSound_Init();
 
+	// load in sound fx
+	explosion_id = DSound_Load_WAV((char*)"exp1.wav");
+	laser_id = DSound_Load_WAV((char*)"shocker.wav");
+
+	// initalize directmusic
+	DMusic_Init();
+
+	// load and start main track
+	main_track_id = DMusic_Load_MIDI((char*)"midifile2.mid");
+	DMusic_Play(main_track_id);
+
+	ShowCursor(FALSE);
+	srand(Start_Clock());
+
+	// color systems redefined to 32-bits from the original;
+	//	times change...
+	rgba_blue = _RGB32BIT(0, 0, 0, 255);
+	rgba_green = _RGB32BIT(0, 0, 255, 0);
+	rgba_red = _RGB32BIT(0, 255, 0, 0);
+	rgba_white = _RGB32BIT(0, 255, 255, 255);
+
+	// create the star field
+	for (index = 0; index < NUM_STARS; index++)
+	{
+		stars[index].x = -WINDOW_WIDTH / 2 + rand() % WINDOW_WIDTH;
+		stars[index].y = -WINDOW_HEIGHT / 2 + rand() % WINDOW_HEIGHT;
+		stars[index].z = NEAR_Z + rand() % (FAR_Z - NEAR_Z);
+		stars[index].color = rgba_white;
+	} // end for starfeild
+
+	// create the fighter model
+	POINT3D temp_tie_vlist[NUM_TIE_VERTS] = {
+		{rgba_white,-40,40,0},	// p0
+		{rgba_white,-40,0,0},	// p1
+		{rgba_white,-40,-40,0},	// p2
+		{rgba_white,-10,0,0},	// p3
+		{rgba_white,0,20,0},	// p4
+		{rgba_white,10,0,0},	// p5
+		{rgba_white,0,-20,0},	// p6
+		{rgba_white,40,40,0},	// p7
+		{rgba_white,40,0,0},	// p8
+		{rgba_white,40,-40,0}	// p9
+	};
+
+	// copy model into real global arrays
+	for (index = 0; index < NUM_TIE_VERTS; index++)
+		tie_vlist[index] = temp_tie_vlist[index];
+
+	LINE3D temp_tie_shapes[NUM_TIE_EDGES] = {
+		{rgba_green,0,2},		// l0
+		{rgba_green,1,3},		// l1
+		{rgba_green,3,4},		// l2
+		{rgba_green,4,5},		// l3
+		{rgba_green,5,6},		// l4
+		{rgba_green,6,3},		// l5
+		{rgba_green,5,8},		// l6
+		{rgba_green,7,9}		// l7
+	};
+
+	for (index = 0; index < NUM_TIE_EDGES; index++)
+		tie_shape[index] = temp_tie_shapes[index];
+
+	for (index = 0; index < NUM_TIES; index++)
+		Init_Tie(index);
+
 	return 0;
 } // end Game_Init
 
 
 
 //============================================================================|
-int Game_Main(void* parms)
-{
-	return 0;
-} // end Game_Main
-
-
-
-//============================================================================|
+/**
+ * In the end we terminate the game resources proper for Windows to be cool 
+ *	with it and all.
+ */
 int Game_Shutdown(void* parms)
 {
-	// KILL ddraw
+	// KILL directX
+	DSound_Stop_All_Sounds();
+	DSound_Shutdown();
+	DMusic_Delete_All_MIDI();
+	DMusic_Shutdown();
+	DInput_Shutdown();
 	DDraw_Shutdown();
 
 	return 0;
 } // end Game_Shutdown
+
+
+
+//============================================================================|
+/**
+ * Moves the starfeild simulating motion of the viewer into the screen
+ */
+void Move_Starfield()
+{
+	int index;
+	for (index = 0; index < NUM_STARS; index++)
+	{
+		stars[index].z -= player_z_vel;
+		if (stars[index].z <= NEAR_Z)
+			stars[index].z = FAR_Z;
+	} // end for index
+} // end Move_Starfield
+
+
+
+//============================================================================|
+/**
+ * Draw's the star feild in a cylindrical manner
+ */
+void Draw_Starfield()
+{
+	int index;
+	for (index = 0; index < NUM_STARS; index++)
+	{
+		float x_per = VIEW_DISTANCE * stars[index].x / stars[index].z;
+		float y_per = VIEW_DISTANCE * stars[index].y / stars[index].z;
+
+		int x_screen = WINDOW_WIDTH / 2 + x_per;
+		int y_screen = WINDOW_HEIGHT / 2 - y_per;
+
+		if (x_screen >= WINDOW_WIDTH || x_screen < 0 || y_screen >= WINDOW_HEIGHT || y_screen < 0)
+			continue;
+		else
+		{
+			((UINT*)back_buffer)[x_screen + y_screen * (back_lpitch >> 2)] =
+				stars[index].color;
+		} // end else
+	} // end for index
+} // end Draw_Starfield
+
+
+
+//============================================================================|
+int Game_Main(void* parms)
+{
+	if (KEY_DOWN(VK_ESCAPE))
+	{
+		window_closed = 1;
+		PostMessage(main_window_handle, WM_DESTROY, 0, 0);
+	} // end if
+
+	if (window_closed)
+		return 0;
+
+	int index;
+
+	Start_Clock();
+	DDraw_Fill_Surface(lpddsback, 0);
+
+	Move_Starfield();
+	DDraw_Lock_Back_Surface();
+
+	Draw_Starfield();
+
+	DDraw_Unlock_Back_Surface();
+
+	if (DMusic_Status_MIDI(main_track_id) == MIDI_STOPPED)
+		DMusic_Play(main_track_id);
+
+	DDraw_Flip();
+
+	Wait_Clock(30);
+
+	return 0;
+} // end Game_Main
