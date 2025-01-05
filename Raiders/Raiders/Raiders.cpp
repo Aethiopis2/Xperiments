@@ -312,6 +312,108 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 
 //============================================================================|
+void Start_Explosion(int tie)
+{
+	for (int index = 0; index < NUM_EXPLOSIONS; index++)
+	{
+		if (explosions[index].state == 0)
+		{
+			explosions[index].state = 1;	// enable state of explosion
+			explosions[index].counter = 0;	// reset the explosion counter
+			explosions[index].color = rgba_green;
+
+			// make a copy of the edge list so that we can blow it up
+			for (int edge = 0; edge < NUM_TIE_EDGES; edge++)
+			{
+				// start end
+				explosions[index].p1[edge].x = ties[tie].x + tie_vlist[tie_shape[edge].v1].x;
+				explosions[index].p1[edge].y = ties[tie].y + tie_vlist[tie_shape[edge].v1].y;
+				explosions[index].p1[edge].z = ties[tie].z + tie_vlist[tie_shape[edge].v1].z;
+
+				// ending end
+				explosions[index].p2[edge].x = ties[tie].x + tie_vlist[tie_shape[edge].v1].x;
+				explosions[index].p2[edge].y = ties[tie].y + tie_vlist[tie_shape[edge].v1].y;
+				explosions[index].p2[edge].z = ties[tie].z + tie_vlist[tie_shape[edge].v1].z;
+
+				// compute trajectory of vector ends
+				explosions[index].vel[edge].x = ties[tie].vx - 8 + rand() % 16;
+				explosions[index].vel[edge].y = ties[tie].vy - 8 + rand() % 16;
+				explosions[index].vel[edge].z = -3 + rand() % 4;
+			} // end for
+
+			return;
+		} // end if found
+	} // end for search explosions
+} // end Start_Explosion
+
+
+
+//============================================================================|
+void Process_Explosions()
+{
+	for (int index = 0; index < NUM_EXPLOSIONS; index++)
+	{
+		// test if the explosion is alive
+		if (explosions[index].state == 0)
+			continue;
+
+		for (int edge = 0; edge < NUM_TIE_EDGES; edge++)
+		{
+			explosions[index].p1[edge].x += explosions[index].vel[edge].x;
+			explosions[index].p1[edge].y += explosions[index].vel[edge].y;
+			explosions[index].p1[edge].z += explosions[index].vel[edge].z;
+
+			explosions[index].p2[edge].x += explosions[index].vel[edge].x;
+			explosions[index].p2[edge].y += explosions[index].vel[edge].y;
+			explosions[index].p2[edge].z += explosions[index].vel[edge].z;
+		} // end for edge
+
+		if (++explosions[index].counter > 100)
+			explosions[index].state = explosions[index].counter = 0;
+	} // end for index
+} // end Process_Explosions
+
+
+
+//============================================================================|
+void Draw_Explosions()
+{
+	for (int index = 0; index < NUM_EXPLOSIONS; index++)
+	{
+		if (explosions[index].state == 0)
+			continue;
+
+		for (int edge = 0; edge < NUM_TIE_EDGES; edge++)
+		{
+			POINT3D p1_per, p2_per;
+			if (explosions[index].p1[edge].z < NEAR_Z && 
+				explosions[index].p2[edge].z < NEAR_Z)
+				continue;
+
+			p1_per.x = VIEW_DISTANCE * explosions[index].p1[edge].x /
+				explosions[index].p1[edge].z;
+			p1_per.y = VIEW_DISTANCE * explosions[index].p1[edge].y /
+				explosions[index].p1[edge].z;
+
+			p2_per.x = VIEW_DISTANCE * explosions[index].p2[edge].x /
+				explosions[index].p2[edge].z;
+			p2_per.y = VIEW_DISTANCE * explosions[index].p2[edge].y /
+				explosions[index].p2[edge].z;
+
+			int p1_screen_x = WINDOW_WIDTH / 2 + p1_per.x;
+			int p1_screen_y = WINDOW_HEIGHT / 2 + p1_per.y;
+			int p2_screen_x = WINDOW_WIDTH / 2 + p2_per.x;
+			int p2_screen_y = WINDOW_HEIGHT / 2 + p2_per.y;
+
+			Draw_Clip_Line16(p1_screen_x, p1_screen_y, p2_screen_x, p2_screen_y,
+				explosions[index].counter, back_buffer, back_lpitch);
+		} // end for
+	} // end for index
+} // end Draw_explosions
+
+
+
+//============================================================================|
 /**
  * Start's a tie fighter at far end of the universe so as to send it towards 
  *	the screen simulating 3D
@@ -364,6 +466,10 @@ void Process_Ties()
 
 
 //============================================================================|
+/**
+ * Draw's all tie fighters in the scene and starts the explosion animation if
+ *	a tie fighter has been hit by a cannon
+ */
 void Draw_Ties()
 {
 	int index;
@@ -379,7 +485,8 @@ void Draw_Ties()
 		bmax_x = bmax_y = -100'000;
 
 		// based on z distance shade the tie fighter
-		UINT rgba_tie = _RGB32BIT(0, 0, (255 - 255 * (ties[index].z / (4 * FAR_Z))), 0);
+		UINT col = (31 - 31 * (ties[index].z / (4 * FAR_Z)));
+		USHORT rgb_tie = _RGB16BIT565(0, col, 0);
 		
 		// as this is a wireframe stuff a tie fighter is 
 		//	made up of bunch of edges and stuff
@@ -401,7 +508,7 @@ void Draw_Ties()
 			int p2_screen_x = WINDOW_WIDTH / 2 + p2_per.x;
 			int p2_screen_y = WINDOW_HEIGHT / 2 - p2_per.y;
 
-			Draw_Clip_Line32(p1_screen_x, p1_screen_y, p2_screen_x, p2_screen_y, rgba_tie,
+			Draw_Clip_Line16(p1_screen_x, p1_screen_y, p2_screen_x, p2_screen_y, rgb_tie,
 				back_buffer, back_lpitch);
 			
 			int min_x = min(p1_screen_x, p2_screen_x);
@@ -600,13 +707,116 @@ int Game_Main(void* parms)
 
 	Start_Clock();
 	DDraw_Fill_Surface(lpddsback, 0);
+	DInput_Read_Keyboard();
+
+	if (game_state == GAME_RUNNING)
+	{
+		if (keyboard_state[DIK_RIGHT])
+		{
+			cross_x += CROSS_VEL;
+			if (cross_x > WINDOW_WIDTH / 2)
+				cross_x -= WINDOW_WIDTH / 2;
+		} // end if moving right
+
+		if (keyboard_state[DIK_LEFT])
+		{
+			cross_x -= CROSS_VEL;
+			if (cross_x < -WINDOW_WIDTH / 2)
+				cross_x = WINDOW_WIDTH / 2;
+		} // end if moving right
+
+		if (keyboard_state[DIK_DOWN])
+		{
+			cross_y -= CROSS_VEL;
+			if (cross_y < -WINDOW_HEIGHT / 2)
+				cross_y = WINDOW_HEIGHT / 2;
+		} // end if moving right
+
+		if (keyboard_state[DIK_UP])
+		{
+			cross_y += CROSS_VEL;
+			if (cross_y > WINDOW_HEIGHT / 2)
+				cross_y -= WINDOW_HEIGHT / 2;
+		} // end if moving right
+
+
+		// player ship speed
+		if (keyboard_state[DIK_A])
+			player_z_vel++;
+		else if (keyboard_state[DIK_S])
+			player_z_vel--;
+
+		// test if player is fireing cannon
+		if (keyboard_state[DIK_SPACE] && cannon_state == 0)
+		{
+			cannon_state = 1;
+			cannon_count = 0;
+
+			target_x_screen = cross_x_screen;
+			target_y_screen = cross_y_screen;
+
+			DSound_Play(laser_id);
+		} // end if cannon
+	} // end if game running
+
+	if (cannon_state == 1)
+		if (++cannon_count > 15)
+			cannon_state = 2;
+
+	if (cannon_state == 2)
+		if (++cannon_count > 20)
+			cannon_state = 0;
 
 	Move_Starfield();
+	Process_Ties();
+	Process_Explosions();
+
 	DDraw_Lock_Back_Surface();
 
 	Draw_Starfield();
+	Draw_Ties();
+	Draw_Explosions();
+
+	// draw cross hairs
+	cross_x_screen = WINDOW_WIDTH / 2 + cross_x;
+	cross_y_screen = WINDOW_HEIGHT / 2 - cross_y;
+
+	Draw_Clip_Line16(cross_x_screen - 16, cross_y_screen,
+		cross_x_screen + 16, cross_y_screen, RGB(255,255,0), back_buffer, back_lpitch);
+	Draw_Clip_Line16(cross_x_screen, cross_y_screen - 16,
+		cross_x_screen, cross_y_screen + 16, RGB(255, 255, 0), back_buffer, back_lpitch);
+	Draw_Clip_Line16(cross_x_screen - 16, cross_y_screen - 4,
+		cross_x_screen - 16, cross_y_screen + 4, RGB(255, 255, 0), back_buffer, back_lpitch);
+	Draw_Clip_Line16(cross_x_screen + 16, cross_y_screen - 4,
+		cross_x_screen + 16, cross_y_screen + 4, RGB(255, 255, 0), back_buffer, back_lpitch);
+
+	// draw laser beams
+	if (cannon_state == 1)
+	{
+		if ((rand() % 2) == 1)
+		{
+			// right beam
+			Draw_Clip_Line16(WINDOW_WIDTH - 1, WINDOW_HEIGHT - 1,
+				-4 + rand() % 8 + target_x_screen, -4 + rand() % 8 + target_y_screen, 
+				RGB(255,0,255), back_buffer, back_lpitch);
+		} // end if right
+		else
+		{
+			// left beam
+			Draw_Clip_Line16(0, WINDOW_HEIGHT - 1,
+				-4 + rand() % 8 + target_x_screen, -4 + rand() % 8 + target_y_screen,
+				RGB(255, 0, rand()), back_buffer, back_lpitch);
+		} // end else left
+	} // end if cannon draw
 
 	DDraw_Unlock_Back_Surface();
+
+	// draw info
+	snprintf(buffer, 256, "Score %d  Kills %d  Escaped %d", score, hits, misses);
+	Draw_Text_GDI(buffer, 0, 0, RGB(255,255,0), lpddsback);
+
+	if (game_state == GAME_OVER)
+		Draw_Text_GDI((char*)"G A M E O V E R", 320 - 8 * 10, 240, RGB(255, 255, 255), lpddsback);
 
 	if (DMusic_Status_MIDI(main_track_id) == MIDI_STOPPED)
 		DMusic_Play(main_track_id);
@@ -614,6 +824,9 @@ int Game_Main(void* parms)
 	DDraw_Flip();
 
 	Wait_Clock(30);
+
+	if (misses > 100)
+		game_state = GAME_OVER;
 
 	return 0;
 } // end Game_Main
